@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="訪問ノート">
 <meta name="theme-color" content="#1f6f5b">
-<meta name="app-version" content="202611030002">
+<meta name="app-version" content="202611030011">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="icon" href="./icon-192.png">
@@ -94,6 +94,15 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
 .tag.today{background:var(--accent-soft);color:var(--accent);font-weight:700}
 .tag.sample{border:1px dashed var(--line);background:transparent}
 .tag.nogeo{background:var(--warn-soft);color:var(--warn)}
+.tag.over{background:var(--danger-soft);color:var(--danger);font-weight:700}
+.tag.soon{background:var(--warn-soft);color:var(--warn);font-weight:700}
+.rp{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.rp:first-child{border-top:0}
+.rp .n{font-family:var(--font-num);width:18px;color:var(--muted);text-align:center}
+.rp .b{flex:1;min-width:0}
+.rp .nm{font-weight:700;overflow-wrap:anywhere}
+.rp .km{font-family:var(--font-num);font-size:12px;color:var(--muted);flex:0 0 auto}
+.sum{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}
 
 .empty{padding:32px 12px;text-align:center;color:var(--muted);font-size:14px}
 .section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
@@ -216,6 +225,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
           <input type="search" id="q" placeholder="会社名・住所で探す" autocomplete="off">
         </div>
         <div class="chips" id="regionChips"></div>
+        <div class="chips" id="sortChips"></div>
       </div>
       <ul class="list" id="companyList"></ul>
       <div class="row" style="margin-top:14px">
@@ -226,6 +236,11 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     <!-- 今日の予定 -->
     <section class="view" id="view-kyou" hidden>
       <div id="planBanner"></div>
+      <div class="section" id="regionPlan">
+        <h2>地域から今日の行程を組む</h2>
+        <div class="chips" id="rpChips"></div>
+        <div id="rpBody" class="note">地域を選ぶと、その地域の会社を「空いている順に優先して、近い順」に並べます。</div>
+      </div>
       <div class="routebar" id="routebar" hidden>
         <button class="btn" id="btnSuggest">近い順に並べ替え</button>
         <a class="btn primary" id="btnNavi" href="#" target="_blank" rel="noopener">Googleマップで案内</a>
@@ -366,7 +381,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     ].map(x=>({id:uid(),sample:true,geo:'sample',createdAt:Date.now(),...x}));
     const t=new Date(); const d=k=>{const x=new Date(t);x.setDate(x.getDate()-k);return ymd(x);};
     // [会社index, 何日前, その日の何件目]
-    const v=[[0,45,1],[0,20,1],[1,6,1],[0,6,2],[1,30,1],[3,60,1],[3,27,1],[2,12,1],[2,9,1],[3,9,2],[4,9,3]]
+    const v=[[0,45,1],[0,27,1],[3,27,2],[2,40,1],[3,60,1],[3,9,1],[4,9,2]]
       .map(([i,k,n])=>({id:uid(),companyId:c[i].id,date:d(k),createdAt:Date.now()-k*86400000+n*3600000}));
     return {companies:c,visits:v,regions:[],home:null,plan:{date:todayStr(),items:[{companyId:c[4].id,done:false},{companyId:c[2].id,done:false},{companyId:c[3].id,done:false}]}};
   };
@@ -400,6 +415,9 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   const regions=()=>[...new Set([...state.regions,...state.companies.map(c=>(c.region||'').trim())].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ja'));
   const mapsUrl=c=>c.mapsUrl||('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(hasGeo(c)?`${c.lat},${c.lng}`:`${c.name} ${c.address||''}`.trim()));
   const status=c=>{ const l=lastVisit(c.id); if(!l) return 'none'; const a=daysAgo(l); return a<=30?'recent':'old'; };
+  const gap=c=>{ const l=lastVisit(c.id); if(!l) return {k:'never',d:9999,label:'未訪問',cls:'none'}; const d=daysAgo(l); if(d>=30) return {k:'over',d,label:`${d}日空き ・ 行った方がいい`,cls:'over'}; if(d>=14) return {k:'soon',d,label:`${d}日空き ・ そろそろ`,cls:'soon'}; return {k:'ok',d,label:d===0?'今日行った':`${d}日前に訪問`,cls:''}; };
+  const gapRank={never:0,over:1,soon:2,ok:3};
+  const visitTime=v=>{ if(!v.createdAt) return ''; const d=new Date(v.createdAt); return ymd(d)===v.date?`${pad(d.getHours())}:${pad(d.getMinutes())}`:''; };
   const planToday=()=>state.plan.date===todayStr()?state.plan.items.filter(i=>byId(i.companyId)):[];
   const dayRoutes=()=>{ const g={}; state.visits.forEach(v=>{ if(byId(v.companyId)) (g[v.date]=g[v.date]||[]).push(v); }); return Object.keys(g).filter(d=>g[d].length>=2&&d!==todayStr()).sort().reverse().slice(0,6).map(d=>({date:d,visits:g[d].sort((a,b)=>a.createdAt-b.createdAt)})); };
 
@@ -461,14 +479,14 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   window.addEventListener('hashchange',()=>setView(location.hash.replace('#','')||'kaisha',false));
 
   // ---- filter state ----
-  let q='', region='';
+  let q='', region='', sortMode='region';
   $('#q').addEventListener('input',e=>{q=e.target.value.trim();renderCompanies();});
 
   // ---- render ----
   function render(){
     const t=todayStr();
     $('#hdrTitle').textContent=VIEWS[view]; $('#hdrAdd').hidden=view!=='kaisha';
-    if(view==='kaisha'){ $('#hdrSub').textContent=`${state.companies.length}社 ・ 地域 ${regions().length}`; renderCompanies(); }
+    if(view==='kaisha'){ const over=state.companies.filter(c=>['never','over'].includes(gap(c).k)).length; $('#hdrSub').textContent=`${state.companies.length}社 ・ 1ヶ月以上空き／未訪問 ${over}社`; renderCompanies(); }
     if(view==='kyou'){ const items=planToday(); const d=items.filter(i=>i.done).length; $('#hdrSub').textContent=`${fmt(t)}（${dow(t)}） ・ ${d}/${items.length}件 訪問済み`; renderPlan(); }
     if(view==='chizu'){ $('#hdrSub').textContent=region?`${region}`:'全地域'; renderMap(); }
     if(view==='rireki'){ $('#hdrSub').textContent=`訪問記録 ${state.visits.length}件`; renderHist(); }
@@ -484,25 +502,54 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   function renderCompanies(){
     const chips=$('#regionChips'); const rs=regions(); if(region&&!rs.includes(region)) region='';
     chips.innerHTML=regionChipsHTML(); bindRegionChips(chips,renderCompanies);
+    const sc=$('#sortChips'); sc.innerHTML=[['region','地域順'],['gap','空いている順'],['count','回数が多い順']].map(([k,l])=>`<button class="chip" data-s="${k}" aria-pressed="${String(k===sortMode)}">${l}</button>`).join('');
+    sc.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{sortMode=b.dataset.s;renderCompanies();}));
     let list=state.companies.filter(c=>!region||c.region===region);
     if(q){ const k=q.toLowerCase(); list=list.filter(c=>(c.name+' '+(c.address||'')+' '+(c.region||'')).toLowerCase().includes(k)); }
-    list.sort((a,b)=>(a.region||'').localeCompare(b.region||'','ja')||a.name.localeCompare(b.name,'ja'));
+    if(sortMode==='gap') list.sort((a,b)=>{ const ga=gap(a), gb=gap(b); return gapRank[ga.k]-gapRank[gb.k]||gb.d-ga.d||a.name.localeCompare(b.name,'ja'); });
+    else if(sortMode==='count') list.sort((a,b)=>visitsOf(b.id).length-visitsOf(a.id).length||a.name.localeCompare(b.name,'ja'));
+    else list.sort((a,b)=>(a.region||'').localeCompare(b.region||'','ja')||a.name.localeCompare(b.name,'ja'));
     const ul=$('#companyList');
     if(!list.length){ ul.innerHTML=`<li class="empty">${region&&!q?`「${esc(region)}」にはまだ会社がありません。<br>右上の「＋」から追加できます。`:state.companies.length?'該当する会社がありません':'会社がまだありません。右上の「＋」か、設定の「まとめて登録」から。'}</li>`; return; }
     ul.innerHTML=list.map(c=>{
-      const n=visitsOf(c.id).length, last=lastVisit(c.id), ago=daysAgo(last);
+      const n=visitsOf(c.id).length, last=lastVisit(c.id), g=gap(c);
       return `<li><button class="card" data-id="${c.id}">
         <div class="name">${esc(c.name)}</div>
         <div class="addr">${esc(c.address||'住所なし')}</div>
-        <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${!hasGeo(c)?'<span class="tag nogeo">位置なし</span>':''}${c.sample?'<span class="tag sample">架空</span>':''}</div>
-        <div class="meta"><div class="cnt num">${n}<small>回</small></div><div class="last">${last?`${fmtShort(last)}${ago===0?'（今日）':ago!=null?` ・ ${ago}日前`:''}`:'未訪問'}</div></div>
+        <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}<span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${!hasGeo(c)?'<span class="tag nogeo">位置なし</span>':''}${c.sample?'<span class="tag sample">架空</span>':''}</div>
+        <div class="meta"><div class="cnt num">${n}<small>回</small></div><div class="last">${last?`最終 ${fmtShort(last)}`:'—'}</div></div>
       </button></li>`;
     }).join('');
     ul.querySelectorAll('.card').forEach(b=>b.addEventListener('click',()=>openSheet(b.dataset.id)));
   }
 
   // ---- 今日 ----
+  let rpRegion='';
+  function renderRegionPlan(){
+    const rs=regions(); if(rpRegion&&!rs.includes(rpRegion)) rpRegion='';
+    const ch=$('#rpChips'); ch.innerHTML=rs.map(r=>{ const cs=state.companies.filter(c=>c.region===r); const over=cs.filter(c=>['never','over'].includes(gap(c).k)).length; return `<button class="chip" data-r="${esc(r)}" aria-pressed="${String(r===rpRegion)}">${esc(r)} ${cs.length}社${over?` ・ 空き${over}`:''}</button>`; }).join('');
+    ch.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{ rpRegion=rpRegion===b.dataset.r?'':b.dataset.r; renderRegionPlan(); }));
+    const body=$('#rpBody');
+    if(!rpRegion){ body.className='note'; body.textContent='地域を選ぶと、その地域の会社を「空いている順に優先して、近い順」に並べます。'; return; }
+    const cs=state.companies.filter(c=>c.region===rpRegion);
+    const cnt={never:0,over:0,soon:0,ok:0}; cs.forEach(c=>cnt[gap(c).k]++);
+    const pri=cs.slice().sort((a,b)=>gapRank[gap(a).k]-gapRank[gap(b).k]||gap(b).d-gap(a).d);
+    const pick=pri.slice(0,8);
+    const home=state.home&&hasGeo(state.home)?state.home:null;
+    const withGeo=pick.filter(hasGeo), noGeo=pick.filter(c=>!hasGeo(c));
+    const ordered=[...orderStops(home,withGeo),...noGeo];
+    let prev=home, km=0;
+    const rows=ordered.map((c,i)=>{ const g=gap(c); let d=null; if(hasGeo(c)&&prev){ d=dist(prev,c); km+=d; } if(hasGeo(c)) prev=c;
+      return `<div class="rp"><span class="n">${i+1}</span><div class="b"><div class="nm">${esc(c.name)}</div><div class="small"><span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?' <span class="tag today">予定済み</span>':''}</div></div><span class="km">${d!=null?(d<10?d.toFixed(1):Math.round(d))+'km':hasGeo(c)?'':'位置なし'}</span></div>`; }).join('');
+    body.className='';
+    body.innerHTML=`<div class="sum"><span class="tag">${cs.length}社</span>${cnt.never?`<span class="tag none">未訪問 ${cnt.never}</span>`:''}${cnt.over?`<span class="tag over">1ヶ月以上 ${cnt.over}</span>`:''}${cnt.soon?`<span class="tag soon">2週間以上 ${cnt.soon}</span>`:''}${cnt.ok?`<span class="tag">最近 ${cnt.ok}</span>`:''}</div>
+      <div class="note" style="margin-bottom:4px">${home?'出発地から':''}この順で回ると近い${km?`（直線で約${km<10?km.toFixed(1):Math.round(km)}km）`:''}${cs.length>8?' ・ 空きが大きい8社まで':''}</div>
+      <div>${rows}</div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="rpApply">この順で今日の予定にする</button>${state.plan.items.length?'<span class="note">今の予定の未訪問分は置き換わります</span>':''}</div>`;
+    $('#rpApply').addEventListener('click',()=>{ const t=todayStr(); const done=state.plan.date===t?state.plan.items.filter(i=>i.done):[]; const doneIds=done.map(i=>i.companyId); const items=ordered.filter(c=>!doneIds.includes(c.id)).slice(0,8-done.length).map(c=>({companyId:c.id,done:false})); state.plan={date:t,items:[...done,...items]}; save(); toast(`${items.length}件を今日の予定にしました`); rpRegion=''; render(); $('#main').scrollTop=$('#planList').offsetTop-80; });
+  }
   function renderPlan(){
+    renderRegionPlan();
     const t=todayStr(); const banner=$('#planBanner'); banner.innerHTML='';
     if(state.plan.date!==t&&state.plan.items.length){
       const left=state.plan.items.filter(i=>!i.done).length;
@@ -634,7 +681,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     const groups={}; vs.forEach(v=>{ const k=v.date.slice(0,7); (groups[k]=groups[k]||[]).push(v); });
     body.innerHTML=Object.keys(groups).sort().reverse().map(k=>{ const [y,m]=k.split('-');
       return `<div class="month">${y}年${+m}月 ・ ${groups[k].length}件</div><div class="hist">${groups[k].map(v=>{ const c=byId(v.companyId);
-        return `<div class="hrow" data-vid="${v.id}"><span class="date">${fmtShort(v.date)}<span class="muted">（${dow(v.date)}）</span></span>
+        return `<div class="hrow" data-vid="${v.id}"><span class="date">${fmtShort(v.date)}<span class="muted">（${dow(v.date)}）</span>${visitTime(v)?`<span class="muted small"> ${visitTime(v)}</span>`:''}</span>
           <button class="who" data-act="open" data-id="${c.id}" style="text-align:left">${esc(c.name)} <span class="muted small">${esc(c.region||'')}</span></button>
           <button class="del ${confirmDel===v.id?'confirm':''}" data-act="del">${confirmDel===v.id?'本当に削除':'削除'}</button></div>`; }).join('')}</div>`; }).join('');
     body.querySelectorAll('[data-act="open"]').forEach(b=>b.addEventListener('click',()=>openSheet(b.dataset.id)));
@@ -726,14 +773,14 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       </div>
       <div class="stats">
         <div class="stat"><div class="k">累計訪問</div><div class="v">${vs.length}<span class="small muted"> 回</span></div></div>
-        <div class="stat"><div class="k">最終訪問</div><div class="v">${last?fmtShort(last):'—'}</div><div class="small muted">${last?(ago===0?'今日':`${ago}日前`):'未訪問'}</div></div>
+        <div class="stat"><div class="k">最終訪問</div><div class="v">${last?fmtShort(last):'—'}</div><div class="small"><span class="tag ${gap(c).cls}">${gap(c).label}</span></div></div>
       </div>
       <button class="btn primary big block" id="shToday" ${today?'disabled':''}>${today?'✓ 今日の訪問は記録済み':'今日訪問した'}</button>
       <div class="hd"><h3>日付を選んで記録</h3></div>
       <div class="datewrap"><input type="date" id="shDate" max="${t}" value="${t}"><button class="btn" id="shYesterday">昨日</button><button class="btn soft" id="shAddDate">この日に訪問した</button></div>
       <p class="note" style="margin:6px 0 0">過去にいつ行ったかを後から入れる用。同じ日は二重に入りません。</p>
       <div class="hd"><h3>訪問履歴 ${vs.length}件</h3></div>
-      ${vs.length?`<div class="hist">${vs.map(v=>`<div class="hrow" data-vid="${v.id}"><span class="date">${fmt(v.date)}<span class="muted">（${dow(v.date)}）</span></span><span class="who"></span>
+      ${vs.length?`<div class="hist">${vs.map(v=>`<div class="hrow" data-vid="${v.id}"><span class="date">${fmt(v.date)}<span class="muted">（${dow(v.date)}）</span>${visitTime(v)?`<span class="muted small"> ${visitTime(v)}</span>`:''}</span><span class="who"></span>
         <button class="del ${confirmDel===v.id?'confirm':''}" data-act="del">${confirmDel===v.id?'本当に削除':'削除'}</button></div>`).join('')}</div>`:'<div class="empty" style="padding:14px">まだ訪問記録がありません</div>'}
       <div class="hd" style="margin-top:22px"><h3>この会社</h3></div>
       <div class="row"><button class="btn" id="shEdit">名前・住所・地域を編集</button><button class="btn" id="shGeo">${hasGeo(c)?'地図で位置を置き直す':'地図で位置を置く'}</button>
