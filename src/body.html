@@ -343,6 +343,14 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       </div>
 
       <div class="section">
+        <h2>診断</h2>
+        <div class="kv"><span>アプリの版</span><span class="num" id="statVer">—</span></div>
+        <div class="kv"><span>最新の版の確認</span><button class="linkish" id="btnCheckUpdate">今すぐ確認</button></div>
+        <div id="diagList" class="note" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:8px"><button class="btn" id="btnCopyDiag">診断をコピー</button></div>
+        <textarea id="diagText" hidden readonly style="margin-top:8px;font-family:var(--font-num);font-size:12px;min-height:80px"></textarea>
+      </div>
+      <div class="section">
         <h2>ホーム画面に置く</h2>
         <p class="note">Safariでこのページを開き、共有ボタン → 「ホーム画面に追加」。アイコンから開くと全画面で使えます。地図の絵だけは通信が要ります（見た所は端末に残ります）。</p>
       </div>
@@ -461,7 +469,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     return start?path.slice(1):path;
   }
   const routeKm=(start,pts)=>{ let km=0, prev=start; pts.forEach(p=>{ if(prev) km+=dist(prev,p); prev=p; }); return km; };
-  const z2h=t=>t.replace(/[０-９]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/[－‐―ー]/g,'-').replace(/　/g,' ');
+  const z2h=t=>t.replace(/[０-９]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/[－‐―]/g,'-').replace(/　/g,' ');
   function addrVariants(a){
     const v=[]; const push=x=>{ x=x.trim(); if(x&&!v.includes(x)) v.push(x); };
     push(a); const b=z2h(a); push(b); push(b.replace(/\s+/g,''));
@@ -559,7 +567,6 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       return `<li><button class="card" data-id="${c.id}">
         <div class="name">${esc(c.name)}</div>
         <div class="addr">${esc(c.address||'住所なし')}</div>
-      ${hasGeo(c)&&c.geo!=='manual'&&c.geo!=='sample'?`<div class="note" style="margin:-6px 0 10px">地図の位置：${c.geo==='google'?'Googleマップのリンクから':c.geoTitle?`「${esc(c.geoTitle)}」に一致`:'住所検索で取得'}${c.geoLevel==='weak'?'（住所と違う町名に一致＝要確認。地図で置き直してください）':approx(c)?'（町名まで＝おおよそ）':''}${c.mapsUrl?' ・ Googleマップはリンク先へ':''}</div>`:c.geo==='manual'?'<div class="note" style="margin:-6px 0 10px">地図の位置：手で置いた位置</div>':''}
         <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}<span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${geoTag(c)}${c.sample?'<span class="tag sample">架空</span>':''}</div>
         <div class="meta"><div class="cnt num">${n}<small>回</small></div><div class="last">${last?`最終 ${fmtShort(last)}`:'—'}</div></div>
       </button></li>`;
@@ -791,7 +798,16 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   }
 
   // ---- 設定 ----
+  function diagText(){
+    const ver=document.querySelector('meta[name=app-version]')?.content||'?';
+    const lines=[`法人訪問ノート 版 ${ver}`,`会社 ${state.companies.length} ・ 位置あり ${state.companies.filter(hasGeo).length} ・ 回線 ${navigator.onLine?'あり':'なし'}`];
+    state.companies.forEach(c=>{ lines.push(`- ${c.name}｜住所:${c.address||'(空)'}｜地域:${c.region||'-'}｜位置:${hasGeo(c)?`${c.lat.toFixed(5)},${c.lng.toFixed(5)}`:'なし'}｜取得:${c.geo||'-'}/${c.geoLevel||'-'}${c.geoTitle?`｜一致:${c.geoTitle}`:''}${c.geoTry?`｜試行:${new Date(c.geoTry).toLocaleString('ja-JP')}`:''}`); });
+    return lines.join('\n');
+  }
   function renderSettings(){
+    $('#statVer').textContent=document.querySelector('meta[name=app-version]')?.content||'—';
+    const miss0=state.companies.filter(c=>!hasGeo(c));
+    $('#diagList').innerHTML=miss0.length?`位置が無い会社：<br>${miss0.map(c=>`・${esc(c.name)}：${c.address?(c.geo==='fail'?'住所から取れず':'未取得')+`（住所「${esc(c.address)}」）`:'住所が空'}`).join('<br>')}`:'全社に位置があります。';
     $('#statCompanies').textContent=state.companies.length;
     $('#statVisits').textContent=state.visits.length;
     $('#statGeo').textContent=`${state.companies.filter(hasGeo).length} / ${state.companies.length}社`;
@@ -802,6 +818,8 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     $('#homeStat').textContent=state.home?(hasGeo(state.home)?'位置あり':'位置が取れていません'):'未設定';
     const miss=state.companies.filter(c=>!hasGeo(c)&&c.address).length; $('#btnGeoAll').disabled=!miss||geoBusy; $('#geoStat').textContent=miss?`未取得 ${miss}社`:'全社取得済み';
   }
+  $('#btnCopyDiag').addEventListener('click',()=>{ const ta=$('#diagText'); ta.value=diagText(); ta.hidden=false; const ok=()=>toast('コピーしました。LINEで貼ってください'); if(navigator.clipboard?.writeText){ navigator.clipboard.writeText(ta.value).then(ok).catch(()=>{ ta.focus(); ta.select(); toast('全選択しました。長押しでコピー'); }); } else { ta.focus(); ta.select(); toast('全選択しました。長押しでコピー'); } });
+  $('#btnCheckUpdate').addEventListener('click',async()=>{ try{ const r=await navigator.serviceWorker?.getRegistration(); if(r){ await r.update(); toast(r.waiting||r.installing?'新しい版を取り込み中。数秒後に切り替わります':'この版が最新です'); } else toast('ブラウザ表示（更新は再読み込みで反映）'); }catch(e){ toast('確認できませんでした'); } });
   $('#btnHomeSave').addEventListener('click',async()=>{ const a=$('#homeAddr').value.trim(); if(!a){ state.home=null; save(); renderSettings(); toast('出発地を消しました'); return; } $('#homeStat').textContent='取得中…'; const g=await geocode(a); state.home=g?{address:a,lat:g.lat,lng:g.lng}:{address:a}; save(); renderSettings(); toast(g?'出発地を保存しました':'住所から位置が取れませんでした'); });
   $('#btnGeoAll').addEventListener('click',async()=>{ const list=state.companies.filter(c=>!hasGeo(c)&&c.address); if(!list.length) return; $('#btnGeoAll').disabled=true; const r=await geocodeCompanies(list,(ok,ng,n)=>{ $('#geoStat').textContent=`${ok+ng}/${n} 取得中…`; }); toast(`位置を取りました：${r.ok}社${r.ng?` ・ 取れず ${r.ng}社`:''}`); renderSettings(); });
 
@@ -866,6 +884,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       <div class="tagrow row" style="margin-bottom:4px">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}${geoTag(c)}${c.sample?'<span class="tag sample">架空データ</span>':''}</div>
       <h2 id="shName">${esc(c.name)}</h2>
       <div class="addr">${esc(c.address||'住所なし')}</div>
+      ${hasGeo(c)&&c.geo!=='manual'&&c.geo!=='sample'?`<div class="note" style="margin:-6px 0 10px">地図の位置：${c.geo==='google'?'Googleマップのリンクから':c.geoTitle?`「${esc(c.geoTitle)}」に一致`:'住所検索で取得'}${c.geoLevel==='weak'?'（住所と違う町名に一致＝要確認。地図で置き直してください）':approx(c)?'（町名まで＝おおよそ）':''}${c.mapsUrl?' ・ Googleマップはリンク先へ':''}</div>`:c.geo==='manual'?'<div class="note" style="margin:-6px 0 10px">地図の位置：手で置いた位置</div>':''}
       <div class="row">
         <a class="btn soft" href="${mapsUrl(c)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M12 21s-6-5.3-6-11a6 6 0 0 1 12 0c0 5.7-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg>Googleマップ</a>
         <button class="btn ${planned?'':'soft'}" id="shPlan">${planned?'今日の予定から外す':'今日の予定に入れる'}</button>

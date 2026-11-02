@@ -26,8 +26,12 @@ sw='''
 <script>
 if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').then(function(reg){
   function show(){ if(document.getElementById('updBar')) return; var b=document.createElement('div'); b.id='updBar'; b.innerHTML='<span>新しい版があります</span><button type="button">更新する</button>'; b.querySelector('button').onclick=function(){ location.reload(); }; document.body.appendChild(b); }
-  reg.addEventListener('updatefound',function(){ var w=reg.installing; w&&w.addEventListener('statechange',function(){ if(w.state==='installed'&&navigator.serviceWorker.controller) show(); }); });
-  if(reg.waiting&&navigator.serviceWorker.controller) show();
+  var t0=Date.now(); var early=function(){ return Date.now()-t0<15000; };
+  function arrived(w){ if(early()){ try{ w&&w.postMessage&&w.postMessage('skip'); }catch(e){} setTimeout(function(){ location.reload(); },300); } else show(); }
+  reg.addEventListener('updatefound',function(){ var w=reg.installing; w&&w.addEventListener('statechange',function(){ if(w.state==='installed'&&navigator.serviceWorker.controller) arrived(w); }); });
+  if(reg.waiting&&navigator.serviceWorker.controller) arrived(reg.waiting);
+  var reloaded=false; navigator.serviceWorker.addEventListener('controllerchange',function(){ if(reloaded) return; reloaded=true; if(early()) location.reload(); });
+  reg.update().catch(function(){});
 }).catch(function(){});}
 </script>
 '''
