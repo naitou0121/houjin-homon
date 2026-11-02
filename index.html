@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="訪問ノート">
 <meta name="theme-color" content="#1f6f5b">
-<meta name="app-version" content="202611030017">
+<meta name="app-version" content="202611030023">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="icon" href="./icon-192.png">
@@ -117,6 +117,17 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
 .routehead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:4px 2px 8px}
 .routehead h2{font-size:17px}
 .routehead button{color:var(--accent);font-weight:700;font-size:14px;min-height:36px;padding:0 6px}
+.why{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.35}
+.plan{flex-wrap:wrap}
+.plan .more{width:36px;height:44px;flex:0 0 36px;display:grid;place-items:center;color:var(--muted);font-size:20px;letter-spacing:1px}
+.strip{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;padding:8px 0 2px;border-top:1px dashed var(--line);margin-top:6px}
+.strip .btn{min-height:36px;font-size:13px;padding:0 10px}
+.prefs{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.prefs .row{gap:6px}
+.prefs .k{font-size:12px;color:var(--muted);width:44px;flex:0 0 44px}
+.prefs .chip{min-height:32px;font-size:13px;padding:0 12px}
+.reason{background:var(--accent-soft);color:var(--accent);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.45;margin-bottom:10px}
+.alt{background:var(--surface);border:1px dashed var(--line);border-radius:12px;padding:8px 12px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}
 
 .empty{padding:32px 12px;text-align:center;color:var(--muted);font-size:14px}
 .section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
@@ -256,6 +267,11 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
         <div id="rpBody" class="note" style="margin-top:8px">地域を押すと、空いている会社を優先して近い順に並べた「今日の順番」が出ます。</div>
       </div>
       <div class="routehead" id="routehead" hidden><h2 id="routeTitle">今日の順番</h2><button id="btnReplan">選び直す</button></div>
+      <div id="reason" hidden></div>
+      <div class="prefs" id="prefs" hidden>
+        <div class="row"><span class="k">起点</span><div class="chips" id="startChips"></div></div>
+        <div class="row"><span class="k">並べ方</span><div class="chips" id="modeChips"></div></div>
+      </div>
       <div class="routebar" id="routebar" hidden>
         <button class="btn" id="btnSuggest">近い順に並べ替え</button>
         <a class="btn primary" id="btnNavi" href="#" target="_blank" rel="noopener">Googleマップで案内</a>
@@ -430,8 +446,9 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   const regions=()=>[...new Set([...state.regions,...state.companies.map(c=>(c.region||'').trim())].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ja'));
   const mapsUrl=c=>c.mapsUrl||('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(hasGeo(c)?`${c.lat},${c.lng}`:`${c.name} ${c.address||''}`.trim()));
   const status=c=>{ const l=lastVisit(c.id); if(!l) return 'none'; const a=daysAgo(l); return a<=30?'recent':'old'; };
-  const gap=c=>{ const l=lastVisit(c.id); if(!l) return {k:'never',d:9999,label:'未訪問',cls:'none'}; const d=daysAgo(l); if(d>=30) return {k:'over',d,label:`${d}日空き ・ 行った方がいい`,cls:'over'}; if(d>=14) return {k:'soon',d,label:`${d}日空き ・ そろそろ`,cls:'soon'}; return {k:'ok',d,label:d===0?'今日行った':`${d}日前に訪問`,cls:''}; };
-  const gapRank={never:0,over:1,soon:2,ok:3};
+  const gap=c=>{ if(c.snoozeUntil&&c.snoozeUntil>todayStr()) return {k:'snoozed',d:-1,label:`${fmtShort(c.snoozeUntil)}まで寝かせ中`,cls:'none'}; const l=lastVisit(c.id); if(!l) return {k:'never',d:9999,label:'未訪問',cls:'none'}; const d=daysAgo(l); if(d>=30) return {k:'over',d,label:`${d}日空き ・ 行った方がいい`,cls:'over'}; if(d>=14) return {k:'soon',d,label:`${d}日空き ・ そろそろ`,cls:'soon'}; return {k:'ok',d,label:d===0?'今日行った':`${d}日前に訪問`,cls:''}; };
+  const gapRank={never:0,over:1,soon:2,ok:3,snoozed:4};
+  const prefs=()=>state.prefs||(state.prefs={start:'auto',mode:'gap'});
   const visitTime=v=>{ if(!v.createdAt) return ''; const d=new Date(v.createdAt); return ymd(d)===v.date?`${pad(d.getHours())}:${pad(d.getMinutes())}`:''; };
   const planToday=()=>state.plan.date===todayStr()?state.plan.items.filter(i=>byId(i.companyId)):[];
   const dayRoutes=()=>{ const g={}; state.visits.forEach(v=>{ if(byId(v.companyId)) (g[v.date]=g[v.date]||[]).push(v); }); return Object.keys(g).filter(d=>g[d].length>=2&&d!==todayStr()).sort().reverse().slice(0,6).map(d=>({date:d,visits:g[d].sort((a,b)=>a.createdAt-b.createdAt)})); };
@@ -466,7 +483,9 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     geoBusy=false; render(); return {ok,ng};
   }
   const currentPos=()=>new Promise(res=>{ if(!navigator.geolocation) return res(null); let done=false; const fin=v=>{ if(!done){ done=true; res(v); } }; setTimeout(()=>fin(null),5000); try{ navigator.geolocation.getCurrentPosition(p=>fin({lat:p.coords.latitude,lng:p.coords.longitude,name:'現在地'}),()=>fin(null),{timeout:4500,maximumAge:60000}); }catch(e){ fin(null); } });
-  async function startPoint(){ if(state.home&&hasGeo(state.home)) return {lat:state.home.lat,lng:state.home.lng,name:'出発地'}; return await currentPos(); }
+  async function startPoint(){ const pr=prefs(); const home=state.home&&hasGeo(state.home)?{lat:state.home.lat,lng:state.home.lng,name:'出発地'}:null;
+    if(pr.start==='home') return home; if(pr.start==='current') return await currentPos();
+    return home||await currentPos(); }
   function naviUrl(stops,origin){
     const p=s=>hasGeo(s)?`${s.lat},${s.lng}`:`${s.name} ${s.address||''}`.trim();
     const u=new URL('https://www.google.com/maps/dir/?api=1'); u.searchParams.set('travelmode','driving');
@@ -541,20 +560,29 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   // ---- 今日 ----
   let rpBusy=false;
   function regionStats(r){ const cs=state.companies.filter(c=>c.region===r); const cnt={never:0,over:0,soon:0,ok:0}; cs.forEach(c=>cnt[gap(c).k]++); return {cs,cnt}; }
-  function buildRoute(r,start){
-    const {cs}=regionStats(r);
+  function buildRoute(r,start,exclude=[]){
+    const cs=regionStats(r).cs.filter(c=>gap(c).k!=='snoozed'&&!exclude.includes(c.id));
+    if(prefs().mode==='dist'&&start){ const g=cs.filter(hasGeo), n=cs.filter(c=>!hasGeo(c)); const o=orderStops(start,g).slice(0,8); return [...o,...n].slice(0,8); }
     const pri=cs.slice().sort((a,b)=>gapRank[gap(a).k]-gapRank[gap(b).k]||gap(b).d-gap(a).d||a.name.localeCompare(b.name,'ja'));
     const pick=pri.slice(0,8);
     const withGeo=pick.filter(hasGeo), noGeo=pick.filter(c=>!hasGeo(c));
     return [...orderStops(start,withGeo),...noGeo];
   }
+  function reasonFor(c,idx,prev,start){
+    const g=gap(c); const parts=[];
+    if(g.k==='never') parts.push('まだ一度も行っていない'); else if(g.k==='over') parts.push(`前回から${g.d}日空いている`); else if(g.k==='soon') parts.push(`前回から${g.d}日`);
+    if(hasGeo(c)&&prev){ const d=dist(prev,c); parts.push(`${idx===0&&start?start.name:'前の会社'}から${d<10?d.toFixed(1):Math.round(d)}km`); }
+    else if(!hasGeo(c)) parts.push('位置が無いので最後に');
+    return parts.join(' ・ ');
+  }
+  async function rebuildPlan(){ const r=state.plan.region; if(!r) return; const t=todayStr(); const done=state.plan.items.filter(i=>i.done); const doneIds=done.map(i=>i.companyId); const ex=[...doneIds,...(state.plan.skipped||[])]; const start=await startPoint(); const ordered=buildRoute(r,start,ex); state.plan.items=[...done,...ordered.slice(0,Math.max(0,8-done.length)).map(c=>({companyId:c.id,done:false}))]; state.plan.startName=start?start.name:''; state.plan.startPt=start?{lat:start.lat,lng:start.lng}:null; save(); render(); }
   async function planRegion(r){
     if(rpBusy) return; rpBusy=true; renderRegionPlan();
     const start=await startPoint();
     const ordered=buildRoute(r,start);
     const t=todayStr(); const done=state.plan.date===t?state.plan.items.filter(i=>i.done):[]; const doneIds=done.map(i=>i.companyId);
     const items=ordered.filter(c=>!doneIds.includes(c.id)).slice(0,Math.max(0,8-done.length)).map(c=>({companyId:c.id,done:false}));
-    state.plan={date:t,region:r,items:[...done,...items],startName:start?start.name:''}; save(); rpBusy=false;
+    state.plan={date:t,region:r,items:[...done,...items],startName:start?start.name:'',startPt:start?{lat:start.lat,lng:start.lng}:null,skipped:[]}; save(); rpBusy=false;
     toast(`${r}：${items.length}件の順番を出しました`); render();
   }
   function renderRegionPlan(){
@@ -580,25 +608,57 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     }
     const items=planToday(); const list=$('#planList');
     const remaining=items.filter(i=>!i.done).map(i=>byId(i.companyId));
+    const pr=prefs(); const hasHome=state.home&&hasGeo(state.home);
+    $('#prefs').hidden=!items.length; $('#reason').hidden=!items.length;
+    if(items.length){
+      $('#startChips').innerHTML=[['auto','おまかせ'],['current','現在地'],['home',hasHome?'出発地':'出発地（未設定）']].map(([k,l])=>`<button class="chip" data-k="${k}" aria-pressed="${String(pr.start===k)}" ${k==='home'&&!hasHome?'disabled':''}>${l}</button>`).join('');
+      $('#modeChips').innerHTML=[['gap','空いている会社を優先'],['dist','距離だけ']].map(([k,l])=>`<button class="chip" data-k="${k}" aria-pressed="${String(pr.mode===k)}">${l}</button>`).join('');
+      $('#startChips').querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{ pr.start=b.dataset.k; save(); rebuildPlan(); }));
+      $('#modeChips').querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{ pr.mode=b.dataset.k; save(); rebuildPlan(); }));
+      const sn=state.plan.startName; const skipped=(state.plan.skipped||[]).length;
+      $('#reason').innerHTML=`<div class="reason">${sn?`<b>${sn}</b>から出て、`:'出発地が無いので最初の会社から、'}${pr.mode==='dist'?'<b>近い順</b>だけで並べています。':'<b>空いている会社を先に入れて</b>、近い順に並べています。'}${state.plan.region?` 対象は「${esc(state.plan.region)}」${skipped?`（外した${skipped}社は除く）`:''}。`:''} 各行の「…」で外す・寝かせる・順番を変えられます。</div>`;
+    }
     $('#routebar').hidden=remaining.length<1;
     if(remaining.length){ const a=$('#btnNavi'); a.href=naviUrl(remaining,state.home&&hasGeo(state.home)?state.home:null); $('#btnSuggest').disabled=remaining.filter(hasGeo).length<2; }
     if(!items.length){ list.innerHTML=''; return; }
-    let prev=state.home&&hasGeo(state.home)?state.home:null; const nextIdx=items.findIndex(i=>!i.done); const lastIdx=items.length-1;
+    let prev=state.plan.startPt||(state.home&&hasGeo(state.home)?state.home:null); let prevC=null; const nextIdx=items.findIndex(i=>!i.done); const lastIdx=items.length-1;
     list.innerHTML=items.map((i,idx)=>{ const c=byId(i.companyId); const km=hasGeo(c)&&prev?dist(prev,c):null; if(hasGeo(c)) prev=c;
       const word=i.done?'済み':idx===nextIdx?'次はここ':idx===lastIdx?'最後に':'そのあと';
+      const why=i.done?'':reasonFor(c,idx,idx===0?(state.plan.startPt||null):prevC,state.plan.startName?{name:state.plan.startName}:null); prevC=hasGeo(c)?c:prevC;
+      const strip=openRow===c.id?`<div class="strip">
+          ${!i.done?`<button class="btn" data-act="skip">今日は外す</button><button class="btn" data-act="snooze" data-days="14">2週間寝かせる</button><button class="btn" data-act="snooze" data-days="30">1ヶ月寝かせる</button><button class="btn danger" data-act="never">もう行かない</button>`:''}
+          <button class="btn soft" data-act="first">ここから回る</button><button class="btn" data-act="up" ${idx===0?'disabled':''}>上へ</button><button class="btn" data-act="down" ${idx===lastIdx?'disabled':''}>下へ</button></div>`:'';
       return `<div class="plan ${i.done?'done':''} ${idx===nextIdx?'next':''}" data-id="${c.id}">
         <span class="order">${idx+1}</span>
         <button class="chk" data-act="done" aria-label="訪問済みにする" aria-pressed="${String(!!i.done)}"><svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg></button>
-        <button class="body" data-act="open"><div class="step">${word}${km!=null?` <span class="num muted">・ ${km<10?km.toFixed(1):Math.round(km)}km</span>`:''}</div><div class="pname">${esc(c.name)}</div><div class="paddr">${esc(c.address||'')}${!hasGeo(c)?' ・ 位置なし':''} <span class="tag ${gap(c).cls}" style="margin-left:4px">${gap(c).label}</span></div></button>
+        <button class="body" data-act="open"><div class="step">${word}${km!=null?` <span class="num muted">・ ${km<10?km.toFixed(1):Math.round(km)}km</span>`:''}</div><div class="pname">${esc(c.name)}</div><div class="paddr">${esc(c.address||'')}${!hasGeo(c)?' ・ 位置なし':''}</div>${why?`<div class="why">${esc(why)}</div>`:''}</button>
         <a class="map" href="${mapsUrl(c)}" target="_blank" rel="noopener" aria-label="Googleマップで開く"><svg viewBox="0 0 24 24"><path d="M12 21s-6-5.3-6-11a6 6 0 0 1 12 0c0 5.7-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg></a>
+        <button class="more" data-act="more" aria-label="この会社の操作">…</button>${strip}
       </div>`; }).join('');
+    // 代わりの候補
+    if(state.plan.region){ const inIds=items.map(i=>i.companyId); const ex=[...inIds,...(state.plan.skipped||[])]; const alt=buildRoute(state.plan.region,state.plan.startPt||null,ex)[0]; if(alt&&items.length<8){ const g=gap(alt); list.insertAdjacentHTML('beforeend',`<div class="alt"><span>代わりの候補：<b>${esc(alt.name)}</b> <span class="tag ${g.cls}">${g.label}</span></span><button class="btn soft" id="altAdd">入れる</button></div>`); $('#altAdd').addEventListener('click',()=>{ state.plan.items.push({companyId:alt.id,done:false}); save(); render(); }); } }
+    list.querySelectorAll('[data-act="more"]').forEach(b=>b.addEventListener('click',()=>{ const id=b.closest('.plan').dataset.id; openRow=openRow===id?null:id; renderPlan(); }));
+    list.querySelectorAll('.strip [data-act]').forEach(b=>b.addEventListener('click',()=>planAction(b.closest('.plan').dataset.id,b.dataset.act,b.dataset.days)));
     list.querySelectorAll('[data-act="done"]').forEach(b=>b.addEventListener('click',()=>togglePlanDone(b.closest('.plan').dataset.id)));
     list.querySelectorAll('[data-act="open"]').forEach(b=>b.addEventListener('click',()=>openSheet(b.closest('.plan').dataset.id)));
   }
+  let openRow=null;
+  function planAction(id,act,days){
+    const t=todayStr(); const items=state.plan.items; const idx=items.findIndex(i=>i.companyId===id); if(idx<0) return; const c=byId(id);
+    state.plan.skipped=state.plan.skipped||[];
+    if(act==='skip'){ items.splice(idx,1); state.plan.skipped.push(id); toast(`${c.name}を今日は外しました`); }
+    else if(act==='snooze'){ const d=new Date(); d.setDate(d.getDate()+(+days)); c.snoozeUntil=ymd(d); items.splice(idx,1); state.plan.skipped.push(id); toast(`${c.name}を${fmtShort(c.snoozeUntil)}まで寝かせます`); }
+    else if(act==='never'){ if(pendingNever!==id){ pendingNever=id; toast('もう一度「もう行かない」を押すと会社ごと削除します'); setTimeout(()=>{ if(pendingNever===id) pendingNever=null; },4000); return; } pendingNever=null; state.companies=state.companies.filter(x=>x.id!==id); state.visits=state.visits.filter(v=>v.companyId!==id); items.splice(idx,1); toast(`${c.name}を削除しました`); }
+    else if(act==='first'){ const [it]=items.splice(idx,1); const done=items.filter(i=>i.done), rest=items.filter(i=>!i.done); it.done=false; const pts=rest.map(i=>byId(i.companyId)).filter(hasGeo); const ng=rest.filter(i=>!hasGeo(byId(i.companyId))); const ordered=orderStops({lat:c.lat,lng:c.lng},pts).map(p=>rest.find(i=>i.companyId===p.id)); state.plan.items=[...done,it,...(hasGeo(c)?[...ordered,...ng]:rest)]; state.plan.startName=''; state.plan.startPt=null; toast(`${c.name}から回る順にしました`); }
+    else if(act==='up'&&idx>0){ [items[idx-1],items[idx]]=[items[idx],items[idx-1]]; }
+    else if(act==='down'&&idx<items.length-1){ [items[idx+1],items[idx]]=[items[idx],items[idx+1]]; }
+    openRow=null; save(); render();
+  }
+  let pendingNever=null;
   function togglePlanDone(id){
     const t=todayStr(); if(state.plan.date!==t) return;
     const it=state.plan.items.find(i=>i.companyId===id); if(!it) return;
-    if(!it.done){ it.done=true; if(!visitedToday(id)){ state.visits.push({id:uid(),companyId:id,date:t,createdAt:Date.now()}); toast('訪問を記録しました'); } else toast('訪問済みにしました（今日の記録は既にあります）'); }
+    if(!it.done){ it.done=true; const cc=byId(id); if(cc) delete cc.snoozeUntil; if(!visitedToday(id)){ state.visits.push({id:uid(),companyId:id,date:t,createdAt:Date.now()}); toast('訪問を記録しました'); } else toast('訪問済みにしました（今日の記録は既にあります）'); }
     else { it.done=false; const v=state.visits.find(v=>v.companyId===id&&v.date===t); if(v){ state.visits=state.visits.filter(x=>x!==v); toast('今日の記録を取り消しました'); } }
     save(); render();
   }
@@ -617,7 +677,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     toast(`${start?start.name+'から':''}近い順にしました（直線で約${Math.round(km)}km）`); render();
   }
   $('#btnSuggest').addEventListener('click',suggestOrder);
-  $('#btnReplan').addEventListener('click',()=>{ const t=todayStr(); const done=state.plan.date===t?state.plan.items.filter(i=>i.done):[]; state.plan={date:t,items:done}; save(); render(); });
+  $('#btnReplan').addEventListener('click',()=>{ const t=todayStr(); const done=state.plan.date===t?state.plan.items.filter(i=>i.done):[]; state.plan={date:t,items:done,skipped:[]}; openRow=null; save(); render(); });
   $('#btnPickPlan').addEventListener('click',()=>setView('kaisha'));
   $('#btnPlanMap').addEventListener('click',()=>{ mapMode='plan'; setView('chizu'); });
 
@@ -805,13 +865,16 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       ${vs.length?`<div class="hist">${vs.map(v=>`<div class="hrow" data-vid="${v.id}"><span class="date">${fmt(v.date)}<span class="muted">（${dow(v.date)}）</span>${visitTime(v)?`<span class="muted small"> ${visitTime(v)}</span>`:''}</span><span class="who"></span>
         <button class="del ${confirmDel===v.id?'confirm':''}" data-act="del">${confirmDel===v.id?'本当に削除':'削除'}</button></div>`).join('')}</div>`:'<div class="empty" style="padding:14px">まだ訪問記録がありません</div>'}
       <div class="hd" style="margin-top:22px"><h3>この会社</h3></div>
+      <div class="row" style="margin-bottom:8px">${c.snoozeUntil&&c.snoozeUntil>t?`<button class="btn warn" id="shUnsnooze">寝かせ解除（${fmtShort(c.snoozeUntil)}まで）</button>`:`<button class="btn" id="shSnooze">1ヶ月寝かせる（提案から外す）</button>`}</div>
       <div class="row"><button class="btn" id="shEdit">名前・住所・地域を編集</button><button class="btn" id="shGeo">${hasGeo(c)?'地図で位置を置き直す':'地図で位置を置く'}</button>
         <button class="btn danger" id="shDel">${pendingDeleteCompany?'本当に削除（履歴も消えます）':'会社を削除'}</button></div>`;
-    $('#shToday').addEventListener('click',()=>{ if(visitedToday(c.id)) return; state.visits.push({id:uid(),companyId:c.id,date:t,createdAt:Date.now()}); if(state.plan.date===t){ const it=state.plan.items.find(i=>i.companyId===c.id); if(it) it.done=true; } save(); toast('今日の訪問を記録しました'); renderSheet(); render(); });
+    $('#shToday').addEventListener('click',()=>{ if(visitedToday(c.id)) return; delete c.snoozeUntil; state.visits.push({id:uid(),companyId:c.id,date:t,createdAt:Date.now()}); if(state.plan.date===t){ const it=state.plan.items.find(i=>i.companyId===c.id); if(it) it.done=true; } save(); toast('今日の訪問を記録しました'); renderSheet(); render(); });
     $('#shYesterday').addEventListener('click',()=>{ const y=new Date(); y.setDate(y.getDate()-1); $('#shDate').value=ymd(y); });
     $('#shAddDate').addEventListener('click',()=>{ const d=$('#shDate').value; if(!d) return; if(d>t){ toast('未来の日付は入れられません'); return; } if(state.visits.some(v=>v.companyId===c.id&&v.date===d)){ toast(`${fmt(d)}は既に記録があります`); return; } state.visits.push({id:uid(),companyId:c.id,date:d,createdAt:Date.now()}); save(); toast(`${fmt(d)}を追加しました`); renderSheet(); render(); });
     $('#shPlan').addEventListener('click',()=>{ togglePlan(c.id); renderSheet(); render(); });
     $('#shEdit').addEventListener('click',()=>{ sheetMode='edit'; renderSheet(); });
+    const su=$('#shSnooze'); if(su) su.addEventListener('click',()=>{ const d=new Date(); d.setDate(d.getDate()+30); c.snoozeUntil=ymd(d); save(); toast(`${fmtShort(c.snoozeUntil)}まで提案から外します`); renderSheet(); render(); });
+    const un=$('#shUnsnooze'); if(un) un.addEventListener('click',()=>{ delete c.snoozeUntil; save(); toast('寝かせを解除しました'); renderSheet(); render(); });
     $('#shGeo').addEventListener('click',()=>{ pickFor=c.id; mapMode='all'; closeSheet(); setView('chizu'); if(hasGeo(c)&&map) map.setView([c.lat,c.lng],16); });
     $('#shDel').addEventListener('click',()=>{ if(!pendingDeleteCompany){ pendingDeleteCompany=true; renderSheet(); setTimeout(()=>{ if(pendingDeleteCompany&&sheetId===c.id){ pendingDeleteCompany=false; renderSheet(); } },4000); return; }
       state.companies=state.companies.filter(x=>x.id!==c.id); state.visits=state.visits.filter(v=>v.companyId!==c.id); state.plan.items=state.plan.items.filter(i=>i.companyId!==c.id); save(); closeSheet(); toast('削除しました'); render(); });
@@ -869,7 +932,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     try{ data=JSON.parse($('#restoreText').value); }catch(e){ msg.textContent='読み取れませんでした。控えの文字列をそのまま貼ってください。'; return; }
     if(!data||!Array.isArray(data.companies)){ msg.textContent='このアプリの控えではないようです。'; return; }
     if(!restoreArmed){ restoreArmed=true; msg.textContent=`会社${data.companies.length}社・訪問記録${(data.visits||[]).length}件で、今の内容（会社${state.companies.length}社・記録${state.visits.length}件）を置き換えます。もう一度押すと実行します。`; $('#btnRestore').textContent='本当に置き換える'; setTimeout(()=>{ restoreArmed=false; $('#btnRestore').textContent='貼った内容で置き換える'; },6000); return; }
-    state={companies:data.companies,visits:data.visits||[],plan:data.plan||{date:todayStr(),items:[]},regions:data.regions||[],home:data.home||null}; save(); restoreArmed=false; $('#btnRestore').textContent='貼った内容で置き換える'; $('#restoreText').value=''; msg.textContent='戻しました。'; toast('控えから戻しました'); render();
+    state={companies:data.companies,visits:data.visits||[],plan:data.plan||{date:todayStr(),items:[]},regions:data.regions||[],home:data.home||null,prefs:data.prefs||{start:'auto',mode:'gap'}}; save(); restoreArmed=false; $('#btnRestore').textContent='貼った内容で置き換える'; $('#restoreText').value=''; msg.textContent='戻しました。'; toast('控えから戻しました'); render();
   });
   let clearArmed=false;
   $('#btnClearSample').addEventListener('click',()=>{
