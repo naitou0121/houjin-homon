@@ -387,10 +387,10 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   const dow=s=>'日月火水木金土'[new Date(s+'T00:00:00').getDay()];
   const daysAgo=s=>{ if(!s) return null; const a=new Date(s+'T00:00:00'), b=new Date(todayStr()+'T00:00:00'); return Math.round((b-a)/86400000); };
   const hasGeo=c=>c&&typeof c.lat==='number'&&typeof c.lng==='number';
-  const approx=c=>hasGeo(c)&&c.geoLevel==='town';
+  const approx=c=>hasGeo(c)&&(c.geoLevel==='town'||c.geoLevel==='weak');
   const coordsFromUrl=u=>{ if(!u) return null; let m=u.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/)||u.match(/[?&]query=(-?\d{1,2}\.\d+)(?:,|%2C)(-?\d{1,3}\.\d+)/)||u.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/)||u.match(/[?&]ll=(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/); if(!m) return null; const lat=+m[1],lng=+m[2]; return (lat>20&&lat<50&&lng>120&&lng<150)?{lat,lng}:null; };
   const applyUrlCoords=c=>{ const g=coordsFromUrl(c.mapsUrl); if(g){ c.lat=g.lat; c.lng=g.lng; c.geo='google'; c.geoLevel='block'; c.geoTitle='Googleマップのリンク'; return true; } return false; };
-  const geoTag=c=>!hasGeo(c)?(c.address?(c.geo==='fail'?'<span class="tag nogeo">住所から位置が取れず</span>':'<span class="tag nogeo">位置を取得中</span>'):'<span class="tag nogeo">住所が無いので位置なし</span>'):approx(c)?'<span class="tag nogeo">位置はおおよそ（町名まで）</span>':'';
+  const geoTag=c=>!hasGeo(c)?(c.address?(c.geo==='fail'?'<span class="tag nogeo">住所から位置が取れず</span>':'<span class="tag nogeo">位置を取得中</span>'):'<span class="tag nogeo">住所が無いので位置なし</span>'):c.geoLevel==='weak'?'<span class="tag over">地図の一致が弱い・要確認</span>':approx(c)?'<span class="tag nogeo">位置はおおよそ（町名まで）</span>':'';
 
   // ---- sample data (架空) ----
   const SAMPLE=()=>{
@@ -469,13 +469,19 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     const n=c.match(/^(.*?(?:丁目|町|村|字)[^\d]*)/); if(n) push(n[1]);                                     // 番地を落とす
     return v;
   }
-  async function geocodeOnce(q){
-    try{ const r=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q)); const j=await r.json(); if(Array.isArray(j)&&j[0]?.geometry?.coordinates){ const [lng,lat]=j[0].geometry.coordinates; const title=j[0].properties?.title||''; const level=/[0-9０-９]+(番地?|号)/.test(title)?'block':'town'; return {lat,lng,src:'gsi',title,level}; } }catch(e){}
+  function matchQuality(input,title){
+    const inp=z2h(input).replace(/\s+/g,''); const rest=title.replace(/^.+?[都道府県]/,'');
+    const m=rest.match(/^.*?[市区町村](.*)$/); let town=(m?m[1]:rest).replace(/[0-9０-９一二三四五六七八九十]+(丁目|番地?|号).*$/,'').trim();
+    if(!town) return true; if(inp.includes(town)) return true;
+    const t2=town.replace(/[字大]/g,''); return t2.length>=2&&inp.includes(t2);
+  }
+  async function geocodeOnce(q,orig){
+    try{ const r=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q)); const j=await r.json(); if(Array.isArray(j)&&j[0]?.geometry?.coordinates){ const [lng,lat]=j[0].geometry.coordinates; const title=j[0].properties?.title||''; let level=/[0-9０-９]+(番地?|号)/.test(title)?'block':'town'; if(!matchQuality(orig||q,title)) level='weak'; return {lat,lng,src:'gsi',title,level}; } }catch(e){}
     return null;
   }
   async function geocode(address){
     const q=(address||'').trim(); if(!q) return null;
-    for(const v of addrVariants(q)){ const g=await geocodeOnce(v); if(g) return g; }
+    let weak=null; for(const v of addrVariants(q)){ const g=await geocodeOnce(v,q); if(g&&g.level!=='weak') return g; if(g&&!weak) weak=g; } if(weak) return weak;
     try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(q)); const j=await r.json(); if(j[0]) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||'',level:'town'}; }catch(e){}
     return null;
   }
@@ -553,7 +559,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       return `<li><button class="card" data-id="${c.id}">
         <div class="name">${esc(c.name)}</div>
         <div class="addr">${esc(c.address||'住所なし')}</div>
-      ${hasGeo(c)&&c.geo!=='manual'&&c.geo!=='sample'?`<div class="note" style="margin:-6px 0 10px">地図の位置：${c.geo==='google'?'Googleマップのリンクから':c.geoTitle?`「${esc(c.geoTitle)}」に一致`:'住所検索で取得'}${approx(c)?'（町名まで＝おおよそ）':''}${c.mapsUrl?' ・ Googleマップはリンク先へ':''}</div>`:c.geo==='manual'?'<div class="note" style="margin:-6px 0 10px">地図の位置：手で置いた位置</div>':''}
+      ${hasGeo(c)&&c.geo!=='manual'&&c.geo!=='sample'?`<div class="note" style="margin:-6px 0 10px">地図の位置：${c.geo==='google'?'Googleマップのリンクから':c.geoTitle?`「${esc(c.geoTitle)}」に一致`:'住所検索で取得'}${c.geoLevel==='weak'?'（住所と違う町名に一致＝要確認。地図で置き直してください）':approx(c)?'（町名まで＝おおよそ）':''}${c.mapsUrl?' ・ Googleマップはリンク先へ':''}</div>`:c.geo==='manual'?'<div class="note" style="margin:-6px 0 10px">地図の位置：手で置いた位置</div>':''}
         <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}<span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${geoTag(c)}${c.sample?'<span class="tag sample">架空</span>':''}</div>
         <div class="meta"><div class="cnt num">${n}<small>回</small></div><div class="last">${last?`最終 ${fmtShort(last)}`:'—'}</div></div>
       </button></li>`;
