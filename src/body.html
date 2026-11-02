@@ -276,7 +276,6 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       <div class="maptools">
         <div class="chips" id="mapRegionChips"></div>
         <div class="chips" id="mapModeChips"></div>
-        <div id="pickBar" hidden></div>
       </div>
       <div id="map"></div>
       <div class="mapfoot" id="mapFoot"></div>
@@ -298,7 +297,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
 
       <div class="section">
         <h2>地図の位置</h2>
-        <p class="note">住所から位置（緯度経度）を引くのは、国土地理院の「地理院地図」が使っている住所検索です。送るのは住所の文字だけ。<b>正しさの保証はありません。</b>番地まで一致した時は建物付近、町名までしか一致しない時は町の代表点に置かれ、その会社には「位置はおおよそ」の札が付きます。地図タブでピンを目で確かめ、ずれていれば「地図で位置を置く」で直してください。Googleマップを開く時は位置ではなく会社名と住所で検索させるので、ピンのずれは道案内に影響しません。</p>
+        <p class="note">住所から位置（緯度経度）は、国土地理院の住所検索 → 取れない時は国の位置参照情報（Geolonia配布）→ それでも無理ならOpenStreetMap、の順に自動で引きます。送るのは住所の文字だけ。<b>正しさの保証はありません。</b>番地まで一致した時は建物付近、町名までの時は町の代表点に置かれ「位置はおおよそ」の札が付きます。Googleマップを開く時は会社名と住所で検索させるので、ピンのずれは道案内に影響しません。</p>
         <div class="row"><button class="btn" id="btnGeoAll">未取得の会社の位置を取る</button><span class="note" id="geoStat"></span></div>
       </div>
 
@@ -433,6 +432,8 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   state.visits=state.visits||[];
   state.regions=state.regions||[];
   state.home=state.home||null;
+  // 手で置いた位置は廃止（2026-11-03 貴斗さん指示）：消して住所から取り直す
+  (function(){ let ch=false; state.companies.forEach(c=>{ if(c.geo==='manual'){ delete c.lat; delete c.lng; delete c.geo; delete c.geoLevel; delete c.geoTitle; delete c.geoTry; ch=true; } }); if(ch) save(); })();
   // 旧版の架空データに座標を足す
   (function(){ const S=SAMPLE(); let ch=false; state.companies.forEach(c=>{ if(c.sample&&!hasGeo(c)){ const m=S.companies.find(x=>x.name===c.name); if(m){ c.lat=m.lat; c.lng=m.lng; c.geo='sample'; ch=true; } } }); if(ch) save(); })();
 
@@ -488,9 +489,25 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     try{ const r=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q)); const j=await r.json(); if(Array.isArray(j)&&j[0]?.geometry?.coordinates){ const [lng,lat]=j[0].geometry.coordinates; const title=j[0].properties?.title||''; let level=/[0-9０-９]+(番地?|号)/.test(title)?'block':'town'; if(!matchQuality(orig||q,title)) level='weak'; return {lat,lng,src:'gsi',title,level}; } }catch(e){}
     return null;
   }
+  function splitAddr(a){ const b=cleanAddr(a).replace(/\s+/g,''); const m=b.match(/^(.+?[都道府県])((?:.+?郡.+?[町村])|(?:.+?市.+?区)|(?:.+?[市区町村]))(.*)$/); return m?{pref:m[1],city:m[2],rest:m[3]}:null; }
+  const geoloniaCache={};
+  async function geocodeGeolonia(address){
+    const sp=splitAddr(address); if(!sp) return null;
+    const key=sp.pref+'/'+sp.city;
+    try{
+      if(!geoloniaCache[key]){ const r=await fetch('https://geolonia.github.io/japanese-addresses/api/ja/'+encodeURIComponent(sp.pref)+'/'+encodeURIComponent(sp.city)+'.json'); if(!r.ok) return null; geoloniaCache[key]=await r.json(); }
+      const rows=geoloniaCache[key]; const rest=sp.rest.replace(/^大字/,'');
+      let best=null, bestLen=0;
+      for(const row of rows){ const town=(row.town||'').replace(/^大字/,''); if(!town) continue; const t2=town.replace(/[一二三四五六七八九十]+丁目$/,''); const variants=[town+(row.koaza?('字'+row.koaza):''),town+(row.koaza||''),town,t2].filter(Boolean);
+        for(const v of variants){ if(v.length>bestLen&&rest.startsWith(v)){ best=row; bestLen=v.length; } } }
+      if(best&&typeof best.lat==='number') return {lat:best.lat,lng:best.lng,src:'geolonia',title:`${sp.pref}${sp.city}${best.town}${best.koaza?'字'+best.koaza:''}`,level:'town'};
+    }catch(e){}
+    return null;
+  }
   async function geocode(address){
     const q=(address||'').trim(); if(!q) return null;
     let weak=null; for(const v of addrVariants(q)){ const g=await geocodeOnce(v,q); if(g&&g.level!=='weak') return g; if(g&&!weak) weak=g; }
+    const gl=await geocodeGeolonia(q); if(gl) return gl;
     try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(cleanAddr(q))); const j=await r.json(); if(j[0]&&matchQuality(q,j[0].display_name||'')) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||'',level:'town'}; }catch(e){}
     if(weak) return weak;
     try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(q)); const j=await r.json(); if(j[0]) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||'',level:'town'}; }catch(e){}
@@ -702,13 +719,12 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   $('#btnPlanMap').addEventListener('click',()=>{ mapMode='plan'; setView('chizu'); });
 
   // ---- 地図 ----
-  let map=null, layer=null, mapMode='all', pickFor=null, selectedId=null;
+  let map=null, layer=null, mapMode='all', selectedId=null;
   function ensureMap(){
     if(map||typeof L==='undefined') return;
     map=L.map('map',{zoomControl:true,attributionControl:true}).setView([35.36,136.77],11);
     L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>'}).addTo(map);
     layer=L.layerGroup().addTo(map);
-    map.on('click',e=>{ if(pickFor){ const c=byId(pickFor); if(c){ c.lat=e.latlng.lat; c.lng=e.latlng.lng; c.geo='manual'; c.geoLevel='manual'; delete c.geoTitle; save(); toast(`${c.name}の位置を置きました`); } pickFor=null; renderMap(); } });
   }
   const pinIcon=(cls,label)=>L.divIcon({className:'',html:`<div class="pin ${cls}">${label||''}</div>`,iconSize:[28,28],iconAnchor:[14,14],popupAnchor:[0,-14]});
   function popupHTML(c){
@@ -724,7 +740,6 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     const modes=[['all','全部の会社'],['plan',`今日の予定（${planToday().length}）`],...routes.map(r=>['day:'+r.date,`${fmtShort(r.date)}（${dow(r.date)}）のルート`])];
     const mc=$('#mapModeChips'); mc.innerHTML=modes.map(([k,l])=>`<button class="chip" data-m="${k}" aria-pressed="${String(k===mapMode)}">${esc(l)}</button>`).join('');
     mc.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{mapMode=b.dataset.m;renderMap();}));
-    const pb=$('#pickBar'); if(pickFor&&byId(pickFor)){ pb.hidden=false; pb.innerHTML=`<div class="pickbar"><span>地図をタップして「${esc(byId(pickFor).name)}」の位置を置く</span><button id="pickCancel">やめる</button></div>`; $('#pickCancel').addEventListener('click',()=>{pickFor=null;renderMap();}); } else { pb.hidden=true; pb.innerHTML=''; }
 
     layer.clearLayers(); const bounds=[]; const foot=$('#mapFoot'); let footHTML='';
     const addPin=(c,cls,label)=>{ const m=L.marker([c.lat,c.lng],{icon:pinIcon(cls+(c.id===selectedId?' sel':'')+(approx(c)?' approx':''),label)}).addTo(layer); m.bindPopup(popupHTML(c),{closeButton:false,maxWidth:260}); m.on('popupopen',()=>{ selectedId=c.id; bindPopup(); }); bounds.push([c.lat,c.lng]); };
@@ -740,8 +755,8 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       const cnt={recent:0,old:0,none:0}; list.forEach(c=>cnt[status(c)]++);
       const noAddr=nogeo.filter(c=>!c.address), failed=nogeo.filter(c=>c.address);
       footHTML=legend+`<div class="note">${region||'全地域'}：${list.length}社 ・ 30日以内 ${cnt.recent} ・ 前に訪問 ${cnt.old} ・ 未訪問 ${cnt.none}</div>`
-        +(failed.length?`<div class="note">住所から位置が取れていない ${failed.length}社：${failed.map(c=>`<button class="chip" style="min-height:30px;font-size:13px;margin:2px" data-pick="${c.id}">${esc(c.name)}</button>`).join('')}<br><button class="btn" id="mapRetry" style="margin-top:6px" ${geoBusy?'disabled':''}>${geoBusy?'取得中…':'住所から取り直す'}</button>　社名を押すと地図を押して置けます。</div>`:'')
-        +(noAddr.length?`<div class="note">住所が無い ${noAddr.length}社：${noAddr.map(c=>`<button class="chip" style="min-height:30px;font-size:13px;margin:2px" data-pick="${c.id}">${esc(c.name)}</button>`).join('')}<br>社名を押して地図上を押すと置けます。住所を入れれば自動で取ります。</div>`:'');
+        +(failed.length?`<div class="note">住所から位置が取れていない ${failed.length}社：${failed.map(c=>esc(c.name)).join('・')}<br><button class="btn" id="mapRetry" style="margin-top:6px" ${geoBusy?'disabled':''}>${geoBusy?'取得中…':'住所から取り直す'}</button></div>`:'')
+        +(noAddr.length?`<div class="note">住所が無い ${noAddr.length}社：${noAddr.map(c=>esc(c.name)).join('・')}。会社の編集で住所を入れると自動で取ります。</div>`:'');
     } else if(mapMode==='plan'){
       const items=planToday(); const cs=items.map(i=>byId(i.companyId)); const pts=[]; if(home){ addHome(); pts.push([home.lat,home.lng]); }
       cs.forEach((c,i)=>{ if(hasGeo(c)){ addPin(c,items[i].done?'':'none',String(i+1)); pts.push([c.lat,c.lng]); } });
@@ -758,7 +773,6 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
         <div class="row"><button class="btn soft" id="mapReuse">この順で今日の予定に入れる</button></div>`;
     }
     foot.innerHTML=footHTML;
-    foot.querySelectorAll('[data-pick]').forEach(b=>b.addEventListener('click',()=>{ pickFor=b.dataset.pick; renderMap(); }));
     const mr0=$('#mapRetry'); if(mr0) mr0.addEventListener('click',async()=>{ const list=state.companies.filter(c=>!hasGeo(c)&&c.address); list.forEach(c=>{ delete c.geoTry; }); mr0.disabled=true; mr0.textContent='取得中…'; const r=await geocodeCompanies(list); toast(`位置を取りました：${r.ok}社${r.ng?` ・ 取れず ${r.ng}社（住所を確かめてください）`:''}`); renderMap(); });
     const ms=$('#mapSuggest'); if(ms) ms.addEventListener('click',async()=>{ await suggestOrder(); renderMap(); });
     const mr=$('#mapReuse'); if(mr) mr.addEventListener('click',()=>{ const r=routes.find(r=>'day:'+r.date===mapMode); const t=todayStr(); if(state.plan.date!==t) state.plan={date:t,items:[]}; let n=0; r.visits.forEach(v=>{ if(!state.plan.items.some(i=>i.companyId===v.companyId)&&state.plan.items.length<8){ state.plan.items.push({companyId:v.companyId,done:visitedToday(v.companyId)}); n++; } }); save(); toast(`${n}件を今日の予定に入れました`); mapMode='plan'; renderMap(); });
@@ -905,7 +919,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
         <button class="del ${confirmDel===v.id?'confirm':''}" data-act="del">${confirmDel===v.id?'本当に削除':'削除'}</button></div>`).join('')}</div>`:'<div class="empty" style="padding:14px">まだ訪問記録がありません</div>'}
       <div class="hd" style="margin-top:22px"><h3>この会社</h3></div>
       <div class="row" style="margin-bottom:8px">${c.snoozeUntil&&c.snoozeUntil>t?`<button class="btn warn" id="shUnsnooze">寝かせ解除（${fmtShort(c.snoozeUntil)}まで）</button>`:`<button class="btn" id="shSnooze">1ヶ月寝かせる（提案から外す）</button>`}</div>
-      <div class="row"><button class="btn" id="shEdit">名前・住所・地域を編集</button><button class="btn" id="shGeo">${hasGeo(c)?'地図で位置を置き直す':'地図で位置を置く'}</button>
+      <div class="row"><button class="btn" id="shEdit">名前・住所・地域を編集</button><button class="btn" id="shGeo">住所から位置を取り直す</button>
         <button class="btn danger" id="shDel">${pendingDeleteCompany?'本当に削除（履歴も消えます）':'会社を削除'}</button></div>`;
     $('#shToday').addEventListener('click',()=>{ if(visitedToday(c.id)) return; delete c.snoozeUntil; state.visits.push({id:uid(),companyId:c.id,date:t,createdAt:Date.now()}); if(state.plan.date===t){ const it=state.plan.items.find(i=>i.companyId===c.id); if(it) it.done=true; } save(); toast('今日の訪問を記録しました'); renderSheet(); render(); });
     $('#shYesterday').addEventListener('click',()=>{ const y=new Date(); y.setDate(y.getDate()-1); $('#shDate').value=ymd(y); });
@@ -914,7 +928,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     $('#shEdit').addEventListener('click',()=>{ sheetMode='edit'; renderSheet(); });
     const su=$('#shSnooze'); if(su) su.addEventListener('click',()=>{ const d=new Date(); d.setDate(d.getDate()+30); c.snoozeUntil=ymd(d); save(); toast(`${fmtShort(c.snoozeUntil)}まで提案から外します`); renderSheet(); render(); });
     const un=$('#shUnsnooze'); if(un) un.addEventListener('click',()=>{ delete c.snoozeUntil; save(); toast('寝かせを解除しました'); renderSheet(); render(); });
-    $('#shGeo').addEventListener('click',()=>{ pickFor=c.id; mapMode='all'; closeSheet(); setView('chizu'); if(hasGeo(c)&&map) map.setView([c.lat,c.lng],16); });
+    $('#shGeo').addEventListener('click',async()=>{ if(!c.address){ toast('住所が空です。編集で住所を入れてください'); return; } toast('住所から取り直しています…'); delete c.geoTry; const r=await geocodeCompanies([c]); toast(r.ok?'位置を取り直しました':'住所から位置が取れませんでした'); renderSheet(); render(); });
     $('#shDel').addEventListener('click',()=>{ if(!pendingDeleteCompany){ pendingDeleteCompany=true; renderSheet(); setTimeout(()=>{ if(pendingDeleteCompany&&sheetId===c.id){ pendingDeleteCompany=false; renderSheet(); } },4000); return; }
       state.companies=state.companies.filter(x=>x.id!==c.id); state.visits=state.visits.filter(v=>v.companyId!==c.id); state.plan.items=state.plan.items.filter(i=>i.companyId!==c.id); save(); closeSheet(); toast('削除しました'); render(); });
     inner.querySelectorAll('[data-act="del"]').forEach(b=>b.addEventListener('click',()=>{ const vid=b.closest('.hrow').dataset.vid; if(confirmDel===vid){ deleteVisit(vid); confirmDel=null; } else { confirmDel=vid; setTimeout(()=>{ if(confirmDel===vid){ confirmDel=null; if(sheetId) renderSheet(); } },4000); } renderSheet(); }));
