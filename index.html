@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="訪問ノート">
 <meta name="theme-color" content="#1f6f5b">
-<meta name="app-version" content="202611030049">
+<meta name="app-version" content="202611030054">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="icon" href="./icon-192.png">
@@ -484,9 +484,10 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   }
   const routeKm=(start,pts)=>{ let km=0, prev=start; pts.forEach(p=>{ if(prev) km+=dist(prev,p); prev=p; }); return km; };
   const z2h=t=>t.replace(/[０-９]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/[－‐―]/g,'-').replace(/　/g,' ');
+  const cleanAddr=a=>z2h(a).replace(/〒\s*\d{3}-?\d{4}/g,' ').replace(/^\s*\d{3}-\d{4}\s+/,'').replace(/(日本|Japan|JAPAN)[,、]?\s*/g,'').replace(/[,、]/g,' ').trim();
   function addrVariants(a){
     const v=[]; const push=x=>{ x=x.trim(); if(x&&!v.includes(x)) v.push(x); };
-    push(a); const b=z2h(a); push(b); push(b.replace(/\s+/g,''));
+    const b=cleanAddr(a); push(b); push(b.replace(/\s+/g,'')); push(a);
     const c=b.replace(/\s+/g,''); const m=c.match(/^(.*?\d+(?:-\d+){0,2})/); if(m) push(m[1]);           // 建物名を落とす
     const n=c.match(/^(.*?(?:丁目|町|村|字)[^\d]*)/); if(n) push(n[1]);                                     // 番地を落とす
     return v;
@@ -503,7 +504,9 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   }
   async function geocode(address){
     const q=(address||'').trim(); if(!q) return null;
-    let weak=null; for(const v of addrVariants(q)){ const g=await geocodeOnce(v,q); if(g&&g.level!=='weak') return g; if(g&&!weak) weak=g; } if(weak) return weak;
+    let weak=null; for(const v of addrVariants(q)){ const g=await geocodeOnce(v,q); if(g&&g.level!=='weak') return g; if(g&&!weak) weak=g; }
+    try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(cleanAddr(q))); const j=await r.json(); if(j[0]&&matchQuality(q,j[0].display_name||'')) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||'',level:'town'}; }catch(e){}
+    if(weak) return weak;
     try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(q)); const j=await r.json(); if(j[0]) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||'',level:'town'}; }catch(e){}
     return null;
   }
