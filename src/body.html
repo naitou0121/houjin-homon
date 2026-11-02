@@ -539,6 +539,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       return `<li><button class="card" data-id="${c.id}">
         <div class="name">${esc(c.name)}</div>
         <div class="addr">${esc(c.address||'住所なし')}</div>
+      ${hasGeo(c)&&c.geo!=='manual'&&c.geo!=='sample'?`<div class="note" style="margin:-6px 0 10px">地図の位置：${c.geoTitle?`「${esc(c.geoTitle)}」に一致`:'住所検索で取得'}${approx(c)?'（町名まで＝おおよそ）':''}${c.mapsUrl?' ・ Googleマップはリンク先へ':''}</div>`:c.geo==='manual'?'<div class="note" style="margin:-6px 0 10px">地図の位置：手で置いた位置</div>':''}
         <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}<span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${geoTag(c)}${c.sample?'<span class="tag sample">架空</span>':''}</div>
         <div class="meta"><div class="cnt num">${n}<small>回</small></div><div class="last">${last?`最終 ${fmtShort(last)}`:'—'}</div></div>
       </button></li>`;
@@ -810,6 +811,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       inner.innerHTML=`<h2 id="shName">${sheetId==='__new__'?'会社を追加':'会社を編集'}</h2>
         <div class="field" style="margin-top:12px"><label for="fName">会社名</label><input id="fName" value="${esc(c.name)}" autocomplete="off"></div>
         <div class="field"><label for="fAddr">住所（地図の位置はここから引きます）</label><input id="fAddr" value="${esc(c.address||'')}" autocomplete="off"></div>
+        <div class="field"><label for="fMaps">Googleマップのリンク（任意・いちばん確実）</label><input id="fMaps" value="${esc(c.mapsUrl||'')}" placeholder="Googleマップで会社を開く → 共有 → リンクをコピー → ここに貼る" autocomplete="off" inputmode="url"><span class="note">貼ってあれば、Googleマップを開く時・道案内はこのリンク先に行きます。</span></div>
         <div class="field"><label>地域（札をタップするか、新しい名前を入れる）</label>
           <div class="chips" id="fRegionChips">${regions().map(r=>`<button type="button" class="chip" data-r="${esc(r)}" aria-pressed="${String(r===(c.region||''))}">${esc(r)}</button>`).join('')}</div>
           <input id="fRegion" value="${esc(c.region||'')}" placeholder="新しい地域名（例：各務原市）" autocomplete="off"></div>
@@ -820,12 +822,13 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       inner.querySelectorAll('#fRegionChips .chip').forEach(b=>b.addEventListener('click',()=>{ $('#fRegion').value=b.dataset.r; syncChips(); }));
       $('#fRegion').addEventListener('input',syncChips);
       $('#fSave').addEventListener('click',async()=>{
-        const name=$('#fName').value.trim(), address=$('#fAddr').value.trim(), reg=$('#fRegion').value.trim();
+        const name=$('#fName').value.trim(), address=$('#fAddr').value.trim(), reg=$('#fRegion').value.trim(), maps=$('#fMaps').value.trim();
         if(!name){ $('#fErr').textContent='会社名を入れてください。'; return; }
+        if(maps&&!/^https?:\/\/(www\.)?(google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps|maps\.google\.[a-z.]+)/.test(maps)){ $('#fErr').textContent='GoogleマップのリンクではないようですGoogleマップの「共有 → リンクをコピー」で出る https://maps.app.goo.gl/… を貼ってください。'; return; }
         if(reg&&!state.regions.includes(reg)) state.regions.push(reg);
         let target; let addrChanged=false;
-        if(sheetId==='__new__'){ target={id:uid(),name,address,region:reg,createdAt:Date.now()}; state.companies.push(target); addrChanged=!!address; toast('追加しました'); sheetId=target.id; }
-        else { target=byId(sheetId); addrChanged=address&&address!==target.address; target.name=name; target.address=address; target.region=reg; delete target.sample; toast('保存しました'); }
+        if(sheetId==='__new__'){ target={id:uid(),name,address,region:reg,mapsUrl:maps||undefined,createdAt:Date.now()}; state.companies.push(target); addrChanged=!!address; toast('追加しました'); sheetId=target.id; }
+        else { target=byId(sheetId); addrChanged=address&&address!==target.address; target.name=name; target.address=address; target.region=reg; if(maps) target.mapsUrl=maps; else delete target.mapsUrl; delete target.sample; toast('保存しました'); }
         save(); sheetMode='view'; renderSheet(); render();
         if(addrChanged){ const g=await geocode(address); if(g){ target.lat=g.lat; target.lng=g.lng; target.geo=g.src; target.geoLevel=g.level; target.geoTitle=g.title; } else target.geo='fail'; save(); if(sheetId===target.id&&sheetMode==='view') renderSheet(); render(); if(!g) toast('住所から位置が取れませんでした。地図タブで置けます'); }
       });
