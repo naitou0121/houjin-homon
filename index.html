@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="訪問ノート">
 <meta name="theme-color" content="#1f6f5b">
-<meta name="app-version" content="202611030023">
+<meta name="app-version" content="202611030029">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="icon" href="./icon-192.png">
@@ -191,6 +191,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
 .pin{width:28px;height:28px;border-radius:50%;border:3px solid var(--accent);background:var(--accent);color:#fff;display:grid;place-items:center;font:700 12px var(--font-num);box-shadow:0 1px 5px rgba(0,0,0,.35)}
 .pin.old{border-color:var(--warn);background:var(--warn)}
 .pin.none{border-color:var(--muted);background:var(--surface);color:var(--fg)}
+.pin.approx{border-style:dashed}
 .pin.sel{outline:3px solid #2b5fb3;outline-offset:1px}
 .pin.home{border-radius:6px;border-color:#2b5fb3;background:#2b5fb3;width:24px;height:24px}
 .leaflet-container{font-family:var(--font-body)}
@@ -311,7 +312,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
 
       <div class="section">
         <h2>地図の位置</h2>
-        <p class="note">住所から位置（緯度経度）を国土地理院の無料サービスで引きます。送るのは住所の文字だけ。取れない会社は地図タブで「地図をタップして置く」。</p>
+        <p class="note">住所から位置（緯度経度）を引くのは、国土地理院の「地理院地図」が使っている住所検索です。送るのは住所の文字だけ。<b>正しさの保証はありません。</b>番地まで一致した時は建物付近、町名までしか一致しない時は町の代表点に置かれ、その会社には「位置はおおよそ」の札が付きます。地図タブでピンを目で確かめ、ずれていれば「地図で位置を置く」で直してください。Googleマップを開く時は位置ではなく会社名と住所で検索させるので、ピンのずれは道案内に影響しません。</p>
         <div class="row"><button class="btn" id="btnGeoAll">未取得の会社の位置を取る</button><span class="note" id="geoStat"></span></div>
       </div>
 
@@ -400,6 +401,8 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   const dow=s=>'日月火水木金土'[new Date(s+'T00:00:00').getDay()];
   const daysAgo=s=>{ if(!s) return null; const a=new Date(s+'T00:00:00'), b=new Date(todayStr()+'T00:00:00'); return Math.round((b-a)/86400000); };
   const hasGeo=c=>c&&typeof c.lat==='number'&&typeof c.lng==='number';
+  const approx=c=>hasGeo(c)&&c.geoLevel==='town';
+  const geoTag=c=>!hasGeo(c)?'<span class="tag nogeo">位置なし</span>':approx(c)?'<span class="tag nogeo">位置はおおよそ（町名まで）</span>':'';
 
   // ---- sample data (架空) ----
   const SAMPLE=()=>{
@@ -444,7 +447,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   const visitedToday=id=>state.visits.some(v=>v.companyId===id&&v.date===todayStr());
   const inPlan=id=>state.plan.date===todayStr()&&state.plan.items.some(i=>i.companyId===id);
   const regions=()=>[...new Set([...state.regions,...state.companies.map(c=>(c.region||'').trim())].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ja'));
-  const mapsUrl=c=>c.mapsUrl||('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(hasGeo(c)?`${c.lat},${c.lng}`:`${c.name} ${c.address||''}`.trim()));
+  const mapsUrl=c=>c.mapsUrl||('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(c.address?`${c.name} ${c.address}`.trim():hasGeo(c)?`${c.lat},${c.lng}`:c.name));
   const status=c=>{ const l=lastVisit(c.id); if(!l) return 'none'; const a=daysAgo(l); return a<=30?'recent':'old'; };
   const gap=c=>{ if(c.snoozeUntil&&c.snoozeUntil>todayStr()) return {k:'snoozed',d:-1,label:`${fmtShort(c.snoozeUntil)}まで寝かせ中`,cls:'none'}; const l=lastVisit(c.id); if(!l) return {k:'never',d:9999,label:'未訪問',cls:'none'}; const d=daysAgo(l); if(d>=30) return {k:'over',d,label:`${d}日空き ・ 行った方がいい`,cls:'over'}; if(d>=14) return {k:'soon',d,label:`${d}日空き ・ そろそろ`,cls:'soon'}; return {k:'ok',d,label:d===0?'今日行った':`${d}日前に訪問`,cls:''}; };
   const gapRank={never:0,over:1,soon:2,ok:3,snoozed:4};
@@ -472,14 +475,14 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
   const routeKm=(start,pts)=>{ let km=0, prev=start; pts.forEach(p=>{ if(prev) km+=dist(prev,p); prev=p; }); return km; };
   async function geocode(address){
     const q=(address||'').trim(); if(!q) return null;
-    try{ const r=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q)); const j=await r.json(); if(Array.isArray(j)&&j[0]?.geometry?.coordinates){ const [lng,lat]=j[0].geometry.coordinates; return {lat,lng,src:'gsi',title:j[0].properties?.title||''}; } }catch(e){}
-    try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(q)); const j=await r.json(); if(j[0]) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||''}; }catch(e){}
+    try{ const r=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q)); const j=await r.json(); if(Array.isArray(j)&&j[0]?.geometry?.coordinates){ const [lng,lat]=j[0].geometry.coordinates; const title=j[0].properties?.title||''; const level=/[0-9０-９]+(番地?|号)/.test(title)?'block':'town'; return {lat,lng,src:'gsi',title,level}; } }catch(e){}
+    try{ const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q='+encodeURIComponent(q)); const j=await r.json(); if(j[0]) return {lat:+j[0].lat,lng:+j[0].lon,src:'osm',title:j[0].display_name||'',level:'town'}; }catch(e){}
     return null;
   }
   let geoBusy=false;
   async function geocodeCompanies(list,onProgress){
     if(geoBusy) return; geoBusy=true; let ok=0, ng=0;
-    for(const c of list){ const g=await geocode(c.address); if(g){ c.lat=g.lat; c.lng=g.lng; c.geo=g.src; ok++; } else { c.geo='fail'; ng++; } save(); onProgress&&onProgress(ok,ng,list.length); await new Promise(r=>setTimeout(r,1100)); }
+    for(const c of list){ const g=await geocode(c.address); if(g){ c.lat=g.lat; c.lng=g.lng; c.geo=g.src; c.geoLevel=g.level; c.geoTitle=g.title; ok++; } else { c.geo='fail'; ng++; } save(); onProgress&&onProgress(ok,ng,list.length); await new Promise(r=>setTimeout(r,1100)); }
     geoBusy=false; render(); return {ok,ng};
   }
   const currentPos=()=>new Promise(res=>{ if(!navigator.geolocation) return res(null); let done=false; const fin=v=>{ if(!done){ done=true; res(v); } }; setTimeout(()=>fin(null),5000); try{ navigator.geolocation.getCurrentPosition(p=>fin({lat:p.coords.latitude,lng:p.coords.longitude,name:'現在地'}),()=>fin(null),{timeout:4500,maximumAge:60000}); }catch(e){ fin(null); } });
@@ -487,7 +490,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     if(pr.start==='home') return home; if(pr.start==='current') return await currentPos();
     return home||await currentPos(); }
   function naviUrl(stops,origin){
-    const p=s=>hasGeo(s)?`${s.lat},${s.lng}`:`${s.name} ${s.address||''}`.trim();
+    const p=s=>s.address?s.address:hasGeo(s)?`${s.lat},${s.lng}`:(s.name||'');
     const u=new URL('https://www.google.com/maps/dir/?api=1'); u.searchParams.set('travelmode','driving');
     if(origin&&hasGeo(origin)) u.searchParams.set('origin',p(origin));
     u.searchParams.set('destination',p(stops[stops.length-1]));
@@ -550,7 +553,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
       return `<li><button class="card" data-id="${c.id}">
         <div class="name">${esc(c.name)}</div>
         <div class="addr">${esc(c.address||'住所なし')}</div>
-        <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}<span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${!hasGeo(c)?'<span class="tag nogeo">位置なし</span>':''}${c.sample?'<span class="tag sample">架空</span>':''}</div>
+        <div class="tagrow">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}<span class="tag ${g.cls}">${g.label}</span>${inPlan(c.id)?'<span class="tag today">今日の予定</span>':''}${geoTag(c)}${c.sample?'<span class="tag sample">架空</span>':''}</div>
         <div class="meta"><div class="cnt num">${n}<small>回</small></div><div class="last">${last?`最終 ${fmtShort(last)}`:'—'}</div></div>
       </button></li>`;
     }).join('');
@@ -688,12 +691,12 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     map=L.map('map',{zoomControl:true,attributionControl:true}).setView([35.36,136.77],11);
     L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>'}).addTo(map);
     layer=L.layerGroup().addTo(map);
-    map.on('click',e=>{ if(pickFor){ const c=byId(pickFor); if(c){ c.lat=e.latlng.lat; c.lng=e.latlng.lng; c.geo='manual'; save(); toast(`${c.name}の位置を置きました`); } pickFor=null; renderMap(); } });
+    map.on('click',e=>{ if(pickFor){ const c=byId(pickFor); if(c){ c.lat=e.latlng.lat; c.lng=e.latlng.lng; c.geo='manual'; c.geoLevel='manual'; delete c.geoTitle; save(); toast(`${c.name}の位置を置きました`); } pickFor=null; renderMap(); } });
   }
   const pinIcon=(cls,label)=>L.divIcon({className:'',html:`<div class="pin ${cls}">${label||''}</div>`,iconSize:[28,28],iconAnchor:[14,14],popupAnchor:[0,-14]});
   function popupHTML(c){
     const l=lastVisit(c.id), a=daysAgo(l), n=visitsOf(c.id).length, p=inPlan(c.id);
-    return `<div class="pop"><b>${esc(c.name)}</b><br><span class="muted small">${esc(c.region||'')}${c.address?' ・ '+esc(c.address):''}</span><br>${n?`${n}回 ・ 最終 ${fmt(l)}（${a===0?'今日':a+'日前'}）`:'未訪問'}
+    return `<div class="pop"><b>${esc(c.name)}</b><br><span class="muted small">${esc(c.region||'')}${c.address?' ・ '+esc(c.address):''}</span><br>${n?`${n}回 ・ 最終 ${fmt(l)}（${a===0?'今日':a+'日前'}）`:'未訪問'}${approx(c)?'<br><span class="small" style="color:var(--warn)">ピンは町名までの位置（おおよそ）</span>':''}
       <div class="row"><button class="btn ${p?'':'soft'}" data-pop="plan" data-id="${c.id}">${p?'予定から外す':'今日の予定に入れる'}</button><button class="btn" data-pop="open" data-id="${c.id}">詳細</button></div></div>`;
   }
   function renderMap(){
@@ -707,7 +710,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     const pb=$('#pickBar'); if(pickFor&&byId(pickFor)){ pb.hidden=false; pb.innerHTML=`<div class="pickbar"><span>地図をタップして「${esc(byId(pickFor).name)}」の位置を置く</span><button id="pickCancel">やめる</button></div>`; $('#pickCancel').addEventListener('click',()=>{pickFor=null;renderMap();}); } else { pb.hidden=true; pb.innerHTML=''; }
 
     layer.clearLayers(); const bounds=[]; const foot=$('#mapFoot'); let footHTML='';
-    const addPin=(c,cls,label)=>{ const m=L.marker([c.lat,c.lng],{icon:pinIcon(cls+(c.id===selectedId?' sel':''),label)}).addTo(layer); m.bindPopup(popupHTML(c),{closeButton:false,maxWidth:260}); m.on('popupopen',()=>{ selectedId=c.id; bindPopup(); }); bounds.push([c.lat,c.lng]); };
+    const addPin=(c,cls,label)=>{ const m=L.marker([c.lat,c.lng],{icon:pinIcon(cls+(c.id===selectedId?' sel':'')+(approx(c)?' approx':''),label)}).addTo(layer); m.bindPopup(popupHTML(c),{closeButton:false,maxWidth:260}); m.on('popupopen',()=>{ selectedId=c.id; bindPopup(); }); bounds.push([c.lat,c.lng]); };
     const home=state.home&&hasGeo(state.home)?state.home:null;
     const addHome=()=>{ if(home){ L.marker([home.lat,home.lng],{icon:L.divIcon({className:'',html:'<div class="pin home"></div>',iconSize:[24,24],iconAnchor:[12,12]})}).addTo(layer).bindPopup('出発地'); bounds.push([home.lat,home.lng]); } };
     const legend=`<div class="legend"><span><i class="dot"></i>30日以内に訪問</span><span><i class="dot old"></i>それより前</span><span><i class="dot none"></i>未訪問</span>${home?'<span><i class="dot home"></i>出発地</span>':''}</div>`;
@@ -838,7 +841,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
         if(sheetId==='__new__'){ target={id:uid(),name,address,region:reg,createdAt:Date.now()}; state.companies.push(target); addrChanged=!!address; toast('追加しました'); sheetId=target.id; }
         else { target=byId(sheetId); addrChanged=address&&address!==target.address; target.name=name; target.address=address; target.region=reg; delete target.sample; toast('保存しました'); }
         save(); sheetMode='view'; renderSheet(); render();
-        if(addrChanged){ const g=await geocode(address); if(g){ target.lat=g.lat; target.lng=g.lng; target.geo=g.src; } else target.geo='fail'; save(); if(sheetId===target.id&&sheetMode==='view') renderSheet(); render(); if(!g) toast('住所から位置が取れませんでした。地図タブで置けます'); }
+        if(addrChanged){ const g=await geocode(address); if(g){ target.lat=g.lat; target.lng=g.lng; target.geo=g.src; target.geoLevel=g.level; target.geoTitle=g.title; } else target.geo='fail'; save(); if(sheetId===target.id&&sheetMode==='view') renderSheet(); render(); if(!g) toast('住所から位置が取れませんでした。地図タブで置けます'); }
       });
       setTimeout(()=>$('#fName').focus(),50);
       return;
@@ -846,7 +849,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
     const c=byId(sheetId); if(!c){ closeSheet(); return; }
     const vs=visitsOf(c.id), last=vs[0]?.date||null, ago=daysAgo(last), today=visitedToday(c.id), planned=inPlan(c.id);
     inner.innerHTML=`
-      <div class="tagrow row" style="margin-bottom:4px">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}${!hasGeo(c)?'<span class="tag nogeo">位置なし</span>':''}${c.sample?'<span class="tag sample">架空データ</span>':''}</div>
+      <div class="tagrow row" style="margin-bottom:4px">${c.region?`<span class="tag">${esc(c.region)}</span>`:''}${geoTag(c)}${c.sample?'<span class="tag sample">架空データ</span>':''}</div>
       <h2 id="shName">${esc(c.name)}</h2>
       <div class="addr">${esc(c.address||'住所なし')}</div>
       <div class="row">
